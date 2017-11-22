@@ -1,26 +1,22 @@
 /*global chrome */
-
 (function () {
-
     'use strict';
+
     var tgs = chrome.extension.getBackgroundPage().tgs;
+    var gsAnalytics = chrome.extension.getBackgroundPage().gsAnalytics;
+    var gsStorage = chrome.extension.getBackgroundPage().gsStorage;
+    var gsUtils = chrome.extension.getBackgroundPage().gsUtils;
 
-    var readyStateCheckInterval = window.setInterval(function () {
-        if (document.readyState === 'complete') {
+    gsUtils.documentReadyAndLocalisedAsPromsied(document).then(function () {
+        var notice = tgs.requestNotice();
+        var noticeContentEl = document.getElementById('gsNotice');
+        noticeContentEl.innerHTML = notice.text;
 
-            window.clearInterval(readyStateCheckInterval);
+        //clear notice (to prevent it showing again)
+        tgs.clearNotice();
 
-            var noticeTextEl = document.getElementById('noticeText'),
-                noticeTitleEl = document.getElementById('noticeTitle'),
-                noticeObj = tgs.requestNotice();
-
-            if (noticeObj.title) {
-                noticeTitleEl.innerHTML = noticeObj.title;
-            }
-            if (noticeObj.text) {
-                noticeTextEl.innerHTML = noticeObj.text;
-            }
-        }
-    }, 50);
-
+        //update local notice version
+        gsStorage.setNoticeVersion(notice.version);
+    });
+    gsAnalytics.reportPageView('notice.html');
 }());

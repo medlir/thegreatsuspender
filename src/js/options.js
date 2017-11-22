@@ -1,46 +1,26 @@
-/*global gsUtils, chrome, invert, populateOption, setScreenCaptureNoteVisibility, setOnlineCheckVisibility, setAudibleNoteVisibility, resetTabTimers */
-
+/*global chrome */
 (function () {
-
     'use strict';
 
-    var gsUtils,
-        elementPrefMap,
-        elementIdMap,
-        readyStateCheckInterval;
-
-    function initialise() {
-
-        gsUtils = chrome.extension.getBackgroundPage().gsUtils;
-        elementPrefMap = {
-            'preview': gsUtils.SCREEN_CAPTURE,
-            'onlineCheck': gsUtils.ONLINE_CHECK,
-            'batteryCheck': gsUtils.BATTERY_CHECK,
-            'unsuspendOnFocus': gsUtils.UNSUSPEND_ON_FOCUS,
-            'dontSuspendPinned': gsUtils.IGNORE_PINNED,
-            'dontSuspendForms': gsUtils.IGNORE_FORMS,
-            'dontSuspendAudio': gsUtils.IGNORE_AUDIO,
-            'ignoreCache': gsUtils.IGNORE_CACHE,
-            'addContextMenu': gsUtils.ADD_CONTEXT,
-            'timeToSuspend': gsUtils.SUSPEND_TIME,
-            'theme': gsUtils.THEME,
-            'whitelist': gsUtils.WHITELIST
-        };
-        elementIdMap = invert(elementPrefMap);
-    }
-
-    function invert(obj) {
-
-        var new_obj = {},
-            prop;
-
-        for (prop in obj) {
-            if (obj.hasOwnProperty(prop)) {
-                new_obj[obj[prop]] = prop;
-            }
-        }
-        return new_obj;
-    }
+    var gsAnalytics = chrome.extension.getBackgroundPage().gsAnalytics;
+    var gsStorage = chrome.extension.getBackgroundPage().gsStorage;
+    var gsUtils = chrome.extension.getBackgroundPage().gsUtils;
+    var elementPrefMap = {
+        'preview': gsStorage.SCREEN_CAPTURE,
+        'forceScreenCapture': gsStorage.SCREEN_CAPTURE_FORCE,
+        'onlineCheck': gsStorage.ONLINE_CHECK,
+        'batteryCheck': gsStorage.BATTERY_CHECK,
+        'unsuspendOnFocus': gsStorage.UNSUSPEND_ON_FOCUS,
+        'dontSuspendPinned': gsStorage.IGNORE_PINNED,
+        'dontSuspendForms': gsStorage.IGNORE_FORMS,
+        'dontSuspendAudio': gsStorage.IGNORE_AUDIO,
+        'ignoreCache': gsStorage.IGNORE_CACHE,
+        'addContextMenu': gsStorage.ADD_CONTEXT,
+        'syncSettings': gsStorage.SYNC_SETTINGS,
+        'timeToSuspend': gsStorage.SUSPEND_TIME,
+        'theme': gsStorage.THEME,
+        'whitelist': gsStorage.WHITELIST
+    };
 
     function selectComboBox(element, key) {
         var i,
@@ -61,18 +41,18 @@
         var optionEls = document.getElementsByClassName('option'),
             pref,
             element,
-            command,
             i;
 
         for (i = 0; i < optionEls.length; i++) {
             element = optionEls[i];
             pref = elementPrefMap[element.id];
-            populateOption(element, gsUtils.getOption(pref));
+            gsUtils.log('-> options: ', pref, gsStorage.getOption(pref));
+            populateOption(element, gsStorage.getOption(pref));
         }
 
-        setScreenCaptureNoteVisibility(gsUtils.getOption(gsUtils.SCREEN_CAPTURE) !== '0');
-        setAudibleNoteVisibility(gsUtils.getChromeVersion() < 45 && gsUtils.getOption(gsUtils.IGNORE_AUDIO));
-        setAutoSuspendOptionsVisibility(gsUtils.getOption(gsUtils.SUSPEND_TIME) > 0);
+        setForceScreenCaptureVisibility(gsStorage.getOption(gsStorage.SCREEN_CAPTURE) !== '0');
+        setAutoSuspendOptionsVisibility(gsStorage.getOption(gsStorage.SUSPEND_TIME) > 0);
+        setSyncNoteVisibility(!gsStorage.getOption(gsStorage.SYNC_SETTINGS));
     }
 
     function populateOption(element, value) {
@@ -100,24 +80,24 @@
         }
     }
 
-    function setAudibleNoteVisibility(visible) {
+    function setForceScreenCaptureVisibility(visible) {
         if (visible) {
-            document.getElementById('audibleOptionNote').style.display = 'block';
+            document.getElementById('forceScreenCaptureContainer').style.display = 'block';
         } else {
-            document.getElementById('audibleOptionNote').style.display = 'none';
+            document.getElementById('forceScreenCaptureContainer').style.display = 'none';
         }
     }
 
-    function setScreenCaptureNoteVisibility(visible) {
+    function setSyncNoteVisibility(visible) {
         if (visible) {
-            document.getElementById('previewNote').style.display = 'block';
+            document.getElementById('syncNote').style.display = 'block';
         } else {
-            document.getElementById('previewNote').style.display = 'none';
+            document.getElementById('syncNote').style.display = 'none';
         }
     }
 
     function setAutoSuspendOptionsVisibility(visible) {
-        Array.prototype.forEach.call(document.getElementsByClassName('autoSuspendOption'), function(el) {
+        Array.prototype.forEach.call(document.getElementsByClassName('autoSuspendOption'), function (el) {
             if (visible) {
                 el.style.display = 'block';
             } else {
@@ -129,20 +109,28 @@
     function handleChange(element) {
         return function () {
             var pref = elementPrefMap[element.id],
-                interval,
-                chromeVersion;
+                interval;
 
             //add specific screen element listeners
-            if (pref === gsUtils.SCREEN_CAPTURE) {
-                setScreenCaptureNoteVisibility(getOptionValue(element) !== '0');
+            if (pref === gsStorage.SCREEN_CAPTURE) {
+                setForceScreenCaptureVisibility(getOptionValue(element) !== '0');
 
-            } else if (pref === gsUtils.IGNORE_AUDIO) {
-                chromeVersion = gsUtils.getChromeVersion();
-                setAudibleNoteVisibility(chromeVersion < 45 && getOptionValue(element));
-
-            } else if (pref === gsUtils.SUSPEND_TIME) {
+            } else if (pref === gsStorage.SUSPEND_TIME) {
                 interval = getOptionValue(element);
                 setAutoSuspendOptionsVisibility(interval > 0);
+
+            } else if (pref === gsStorage.SYNC_SETTINGS) {
+                // we only really want to show this on load. not on toggle
+                if (getOptionValue(element)) {
+                    setSyncNoteVisibility(false);
+                }
+            }
+
+            var valueChanged = saveChange(element);
+            if (valueChanged) {
+                gsStorage.syncSettings();
+                var prefKey = elementPrefMap[element.id];
+                gsUtils.performPostSaveUpdates([prefKey]);
             }
         };
     }
@@ -150,68 +138,57 @@
     function saveChange(element) {
 
         var pref = elementPrefMap[element.id],
-            oldValue = gsUtils.getOption(pref),
+            oldValue = gsStorage.getOption(pref),
             newValue = getOptionValue(element);
 
         //clean up whitelist before saving
-        if (pref === gsUtils.WHITELIST) {
+        if (pref === gsStorage.WHITELIST) {
             newValue = gsUtils.cleanupWhitelist(newValue);
         }
 
         //save option
-        gsUtils.setOption(elementPrefMap[element.id], newValue);
+        gsStorage.setOption(elementPrefMap[element.id], newValue);
 
-
-        //if interval has changed then reset the tab timers
-        if (pref === gsUtils.SUSPEND_TIME && oldValue !== newValue) {
-            chrome.extension.getBackgroundPage().tgs.resetAllTabTimers();
-        }
-
-        //if context menu has been disabled then remove from chrome
-        if (pref === gsUtils.ADD_CONTEXT) {
-            chrome.extension.getBackgroundPage().tgs.buildContextMenu(newValue);
-        }
+        return (oldValue !== newValue);
     }
 
-    function closeSettings() {
-        //only close the window if we were opened in a new tab.
-        //else, go back to the page we were on.
-        //this is to fix closing tabs if they were opened from the context menu.
-        if (document.referrer === "") {
-            window.close();
-        } else {
-            history.back();
-        }
-    }
+    gsUtils.documentReadyAndLocalisedAsPromsied(document).then(function () {
 
-    readyStateCheckInterval = window.setInterval(function () {
-        if (document.readyState === 'complete') {
+        initSettings();
 
-            window.clearInterval(readyStateCheckInterval);
+        var optionEls = document.getElementsByClassName('option'),
+            element,
+            i;
 
-            initialise();
-            initSettings();
-
-            var optionEls = document.getElementsByClassName('option'),
-                saveEl = document.getElementById('saveBtn'),
-                cancelEl = document.getElementById('cancelBtn'),
-                element,
-                i;
-
-            //add change listeners for all 'option' elements
-            for (i = 0; i < optionEls.length; i++) {
-                element = optionEls[i];
+        //add change listeners for all 'option' elements
+        for (i = 0; i < optionEls.length; i++) {
+            element = optionEls[i];
+            if (element.tagName === 'TEXTAREA') {
+                element.addEventListener('input', handleChange(element), false);
+            } else {
                 element.onchange = handleChange(element);
             }
-            saveEl.onclick = function (e) {
-                for (i = 0; i < optionEls.length; i++) {
-                    saveChange(optionEls[i]);
-                }
-                closeSettings();
-            };
-            cancelEl.onclick = function (e) {
-                closeSettings();
-            };
         }
-    }, 50);
+
+        //hide incompatible sidebar items if in incognito mode
+        if (chrome.extension.inIncognitoContext) {
+            Array.prototype.forEach.call(document.getElementsByClassName('noIncognito'), function (el) {
+                el.style.display = 'none';
+            });
+            window.alert(chrome.i18n.getMessage('js_options_incognito_warning'));
+        }
+    });
+
+    //listen for background events
+    chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
+        switch (request.action) {
+
+        case 'reloadOptions':
+            initSettings();
+        }
+        sendResponse();
+        return false;
+    });
+
+    gsAnalytics.reportPageView('options.html');
 }());

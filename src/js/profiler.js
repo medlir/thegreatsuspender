@@ -1,16 +1,17 @@
 /*global chrome */
-
 (function () {
-
     'use strict';
 
+    var gsAnalytics = chrome.extension.getBackgroundPage().gsAnalytics;
+    var gsUtils = chrome.extension.getBackgroundPage().gsUtils;
+    var tgs = chrome.extension.getBackgroundPage().tgs;
     var currentTabs = {};
 
     function generateTabInfo(info) {
         var html = '',
             windowId = info && info.windowId ? info.windowId : '?',
             tabId = info && info.tabId ? info.tabId : '?',
-            tabTitle = info && info.tab ? info.tab.title : 'unknown',
+            tabTitle = info && info.tab ? gsUtils.htmlEncode(info.tab.title) : 'unknown',
             tabTimer = info ? info.timerUp : -1,
             tabStatus = info ? info.status : 'unknown';
 
@@ -30,8 +31,12 @@
             tabs.forEach(function (curTab, i, tabs) {
                 currentTabs[tabs[i].id] = tabs[i];
 
-                chrome.extension.getBackgroundPage().tgs.requestTabInfo(curTab.id, function (suspendInfo) {
-                    var html = '',
+                tgs.requestTabInfo(curTab.id, function (suspendInfo) {
+                    if (chrome.runtime.lastError) {
+                        gsUtils.error(chrome.runtime.lastError.message);
+                    }
+
+                    var html,
                         tableEl = document.getElementById('gsProfilerBody');
 
                     suspendInfo.tab = curTab;
@@ -43,7 +48,7 @@
         });
     }
 
-    window.onload = function () {
+    gsUtils.documentReadyAndLocalisedAsPromsied(document).then(function () {
         fetchInfo();
 
         //handler for refresh
@@ -63,5 +68,6 @@
             });
         });
         */
-    };
+    });
+    gsAnalytics.reportPageView('profiler.html');
 }());

@@ -1,26 +1,29 @@
-/*global chrome */
-
+/*global chrome, historyItems */
 (function () {
-
     'use strict';
-    var gsUtils = chrome.extension.getBackgroundPage().gsUtils,
-        restoreAttempted = false;
+
+    var gsAnalytics = chrome.extension.getBackgroundPage().gsAnalytics;
+    var gsMessages = chrome.extension.getBackgroundPage().gsMessages;
+    var gsStorage = chrome.extension.getBackgroundPage().gsStorage;
+    var gsUtils = chrome.extension.getBackgroundPage().gsUtils;
+
+    var restoreAttempted = false;
 
     function removeTabFromList(tab) {
 
-        var recoveryLinksEl = document.getElementById('recoveryLinks'),
-            childLinks = recoveryLinksEl.children;
+        var recoveryTabsEl = document.getElementById('recoveryTabs'),
+            childLinks = recoveryTabsEl.children;
 
         for (var i = 0; i < childLinks.length; i++) {
             var element = childLinks[i];
-            if (element.getAttribute('data-url') === tab.url
-                    || element.getAttribute('data-tabId') == tab.id) { //do a loose match on id here
-                recoveryLinksEl.removeChild(element);
+            if (element.getAttribute('data-url') === tab.url ||
+                    element.getAttribute('data-tabId') == tab.id) { // eslint-disable-line eqeqeq
+                recoveryTabsEl.removeChild(element);
             }
         }
 
         //if removing the last element
-        if (recoveryLinks.children.length === 0) {
+        if (recoveryTabsEl.children.length === 0) {
 
             //if we have already clicked the restore button then redirect to success page
             if (restoreAttempted) {
@@ -42,10 +45,10 @@
 
     function populateMissingTabs() {
 
-        var recoveryEl = document.getElementById('recoveryLinks'),
+        var recoveryEl = document.getElementById('recoveryTabs'),
             tabEl;
 
-        gsUtils.fetchLastSession().then(function (lastSession) {
+        gsStorage.fetchLastSession().then(function (lastSession) {
 
             if (!lastSession) {
                 hideRecoverySection();
@@ -56,11 +59,11 @@
 
                 window.tabs.forEach(function (tabProperties) {
 
-                    if (!chrome.extension.getBackgroundPage().tgs.isSpecialTab(tabProperties)) {
+                    if (!gsUtils.isSpecialTab(tabProperties)) {
                         tabProperties.windowId = window.id;
                         tabProperties.sessionId = lastSession.sessionId;
-                        tabEl = sessionUtils.createTabHtml(tabProperties, true);
-                        tabEl.onclick = function(e) {
+                        tabEl = historyItems.createTabHtml(tabProperties, false);
+                        tabEl.onclick = function (e) {
                             e.preventDefault();
                             chrome.tabs.create({url: tabProperties.url, active: false});
                             removeTabFromList(tabProperties);
@@ -73,67 +76,60 @@
         });
     }
 
-    function sendMessageToTab(tabId, message, callback) {
-        try {
-            chrome.tabs.sendMessage(tabId, message, {frameId: 0}, callback);
-        }
-        catch(e) {
-            chrome.tabs.sendMessage(tabId, message, callback);
-        }
-    }
-
     function checkForActiveTabs() {
 
         //hide tabs that respond to getInfo request
         chrome.windows.getAll({ populate: true }, function (windows) {
             windows.forEach(function (curWindow) {
                 curWindow.tabs.forEach(function (curTab) {
-                    sendMessageToTab(curTab.id, {action: 'requestInfo'}, function (response) {
-                        removeTabFromList(curTab);
+                    gsMessages.sendPingToTab(curTab.id, function (err) {
+                        if (err) {
+                            gsUtils.log('Could not make contact with tab: ' + curTab.id + '. Assuming tab has crashed.');
+                        }
+                        else {
+                            removeTabFromList(curTab);
+                        }
                     });
                 });
             });
         });
     }
 
-    var readyStateCheckInterval = window.setInterval(function () {
-        if (document.readyState === 'complete') {
+    gsUtils.documentReadyAndLocalisedAsPromsied(document).then(function () {
 
-            window.clearInterval(readyStateCheckInterval);
+        var restoreEl = document.getElementById('restoreSession'),
+            manageEl = document.getElementById('manageManuallyLink'),
+            previewsEl = document.getElementById('previewsOffBtn'),
+            warningEl = document.getElementById('screenCaptureNotice');
 
-            var restoreEl = document.getElementById('restoreSession'),
-                manageEl = document.getElementById('manageManuallyLink'),
-                previewsEl = document.getElementById('previewsOffBtn'),
-                warningEl = document.getElementById('screenCaptureNotice');
+        var handleAutoRestore = function () {
+            restoreAttempted = true;
+            restoreEl.className += ' btnDisabled';
+            gsUtils.recoverLostTabs(checkForActiveTabs);
+            restoreEl.removeEventListener('click', handleAutoRestore);
+        };
 
-            var handleAutoRestore = function () {
-                restoreAttempted = true;
-                restoreEl.className += " btnDisabled";
-                gsUtils.recoverLostTabs(checkForActiveTabs);
-                restoreEl.removeEventListener('click', handleAutoRestore);
+        restoreEl.addEventListener('click', handleAutoRestore);
+
+        manageEl.onclick = function (e) {
+            e.preventDefault();
+            chrome.tabs.create({ url: chrome.extension.getURL('history.html') });
+        };
+
+        if (previewsEl) {
+            previewsEl.onclick = function (e) {
+                gsStorage.setOption(gsStorage.SCREEN_CAPTURE, '0');
+                window.location.reload();
             };
 
-            restoreEl.addEventListener('click', handleAutoRestore);
-
-            manageEl.onclick = function (e) {
-                window.location.href = chrome.extension.getURL('history.html');
-            };
-
-            if (previewsEl) {
-                previewsEl.onclick = function (e) {
-                    gsUtils.setOption(gsUtils.SCREEN_CAPTURE, '0');
-                    window.location.reload();
-                };
-
-                //show warning if screen capturing turned on
-                if (gsUtils.getOption(gsUtils.SCREEN_CAPTURE) !== '0') {
-                    warningEl.style.display = 'block';
-                }
+            //show warning if screen capturing turned on
+            if (gsStorage.getOption(gsStorage.SCREEN_CAPTURE) !== '0') {
+                warningEl.style.display = 'block';
             }
-
-            populateMissingTabs();
-
         }
-    }, 50);
 
+        populateMissingTabs();
+    });
+
+    gsAnalytics.reportPageView('recovery.html');
 }());
